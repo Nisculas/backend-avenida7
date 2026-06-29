@@ -1,10 +1,10 @@
 import os
 import sqlite3
-from flask import  request, jsonify
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from flask import Flask
+
 
 # Obrigatório: o nome da variável precisa ser exatamente 'app'
 app = Flask(__name__)
