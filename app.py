@@ -13,11 +13,13 @@ app = Flask(__name__)
 def home():
     return "Olá, Mundo! O Flask está funcionando."
 
+CORS(app, resources={r"/api/*": {"origins": "*"}})
+
 if __name__ == "__main__":
     app.run(debug=True)
 
 # O CORS é obrigatório para que o seu arquivo HTML consiga enviar dados para o Python
-CORS(app) 
+ 
 
 DATABASE = 'avenida7.db'
 
