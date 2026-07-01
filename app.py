@@ -4,22 +4,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 
-
-
-# Obrigatório: o nome da variável precisa ser exatamente 'app'
+# Inicialização do app Flask
 app = Flask(__name__)
 
-@app.route("/")
-def home():
-    return "Olá, Mundo! O Flask está funcionando."
-
+# Configuração do CORS (Obrigatório para o Netlify conseguir conversar com o Render)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
-
-if __name__ == "__main__":
-    app.run(debug=True)
-
-# O CORS é obrigatório para que o seu arquivo HTML consiga enviar dados para o Python
- 
 
 DATABASE = 'avenida7.db'
 
@@ -32,7 +21,7 @@ def configurar_banco():
     conn = obter_conexao()
     cursor = conn.cursor()
     
-    # 1. Tabela de usuários (Admin/Master e Operador)
+    # 1. Tabela de usuários
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -43,7 +32,7 @@ def configurar_banco():
         )
     ''')
     
-    # 2. Tabela de Produtos cadastrados
+    # 2. Tabela de Produtos
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS produtos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,14 +44,14 @@ def configurar_banco():
         )
     ''')
     
-    # 3. Tabela de Estoque Físico por Cidade (Numerários)
+    # 3. Tabela de Estoque Físico por Cidade
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS estoque_cidades (
             produto_id INTEGER,
             cidade TEXT NOT NULL,
             quantidade INTEGER NOT NULL DEFAULT 0,
             valor_unitario REAL DEFAULT 0.0,
-            PRIMARY KEY (produto_id, cidade),
+            PRIMARY KEY (produto_id, city=cidade),
             FOREIGN KEY(produto_id) REFERENCES produtos(id)
         )
     ''')
@@ -71,22 +60,22 @@ def configurar_banco():
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS movimentacoes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            tipo TEXT NOT NULL, -- 'Entrada', 'Saída', 'Transferência'
+            tipo TEXT NOT NULL,
             data_hora TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             produto_id INTEGER,
             quantidade INTEGER NOT NULL,
             valor_unitario REAL,
-            local TEXT NOT NULL, -- Cidade Origem
-            destino TEXT,        -- Cidade Destino
-            responsavel TEXT NOT NULL, -- Quem entregou / logistica
-            recebedor TEXT,            -- Quem recebeu na obra
-            obs TEXT,                  -- Motivo da obra
-            status_entrega TEXT NOT NULL, -- 'Pendente' ou 'Entregue'
+            local TEXT NOT NULL,
+            destino TEXT,
+            responsavel TEXT NOT NULL,
+            recebedor TEXT,
+            obs TEXT,
+            status_entrega TEXT NOT NULL,
             FOREIGN KEY(produto_id) REFERENCES produtos(id)
         )
     ''')
     
-    # Cria o usuário Master padrão se o banco for novo
+    # Cria o usuário Admin padrão se não existir
     cursor.execute("SELECT * FROM usuarios WHERE login='admin'")
     if not cursor.fetchone():
         senha_crip = generate_password_hash('1234')
@@ -96,7 +85,14 @@ def configurar_banco():
     conn.commit()
     conn.close()
 
+# GARANTE QUE O BANCO VAI SER CRIADO AUTOMATICAMENTE NA NUVEM ASSIM QUE LIGAR
+configurar_banco()
+
 # --- ROTAS DA API ---
+
+@app.route("/")
+def home():
+    return "Olá, Mundo! O Flask está funcionando e o Banco de Dados está pronto."
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -118,23 +114,23 @@ def login():
 @app.route('/api/dashboard', methods=['GET'])
 def dados_dashboard():
     conn = obter_conexao()
-    
-    # Valor total do estoque
-    estoques = conn.execute("SELECT quantidade, valor_unitario FROM estoque_cidades").fetchall()
-    valor_total = sum(e['quantidade'] * e['valor_unitario'] for e in estoques)
-    
-    # Total de produtos cadastrados
-    total_prod = conn.execute("SELECT COUNT(*) as total FROM produtos").fetchone()['total']
-    
-    # Entregas pendentes
-    pendentes = conn.execute("SELECT COUNT(*) as total FROM movimentacoes WHERE tipo='Saída' AND status_entrega='Pendente'").fetchone()['total']
-    
-    conn.close()
-    return jsonify({
-        "valor_total_estoque": valor_total,
-        "total_produtos": total_prod,
-        "entregas_pendentes": pendentes
-    })
+    try:
+        estoques = conn.execute("SELECT quantidade, valor_unitario FROM estoque_cidades").fetchall()
+        valor_total = sum(e['quantidade'] * e['valor_unitario'] for e in estoques)
+        
+        total_prod = conn.execute("SELECT COUNT(*) as total FROM produtos").fetchone()['total']
+        
+        pendentes = conn.execute("SELECT COUNT(*) as total FROM movimentacoes WHERE tipo='Saída' AND status_entrega='Pendente'").fetchone()['total']
+        
+        return jsonify({
+            "valor_total_estoque": valor_total,
+            "total_produtos": total_prod,
+            "entregas_pendentes": pendentes
+        })
+    except Exception as e:
+        return jsonify({"erro": str(e)}), 500
+    finally:
+        conn.close()
 
 @app.route('/api/produtos', methods=['GET', 'POST'])
 def gerenciar_produtos():
@@ -190,7 +186,7 @@ def entrada_material():
     
     est = cursor.execute("SELECT quantidade FROM estoque_cidades WHERE produto_id=? AND cidade=?", (p_id, cidade)).fetchone()
     if est:
-        cursor.execute("UPDATE estoque_cidades SET quantidade=?, valor_unitario=? WHERE produto_id=? AND cidade=?", (est['quantidade'] + qtd, val, p_id, cidade))
+        cursor.execute("UPDATE estoque_cidades SET quantidade=?, valor_unitario=? WHERE produto_id=? AND cidade=?", (est['quantidade'] + qtd, val, p_id, city=cidade))
     else:
         cursor.execute("INSERT INTO estoque_cidades (produto_id, cidade, quantidade, valor_unitario) VALUES (?, ?, ?, ?)", (p_id, cidade, qtd, val))
         
@@ -214,14 +210,13 @@ def saida_material():
     conn = obter_conexao()
     cursor = conn.cursor()
     
-    est = cursor.execute("SELECT quantidade FROM estoque_cidades WHERE produto_id=? AND cidade=?", (p_id, cidade)).fetchone()
+    est = cursor.execute("SELECT quantidade FROM estoque_cidades WHERE produto_id=? AND cidade=?", (p_id, city=cidade)).fetchone()
     
-    # TRAVA CONTRA ESTOQUE NEGATIVO REAL NO BANCO
     if not est or est['quantidade'] < qtd:
         conn.close()
         return jsonify({"sucesso": False, "mensagem": f"Erro! Saldo insuficiente em {cidade}."}), 400
         
-    cursor.execute("UPDATE estoque_cidades SET quantidade=? WHERE produto_id=? AND cidade=?", (est['quantidade'] - qtd, p_id, cidade))
+    cursor.execute("UPDATE estoque_cidades SET quantidade=? WHERE produto_id=? AND cidade=?", (est['quantidade'] - qtd, p_id, city=cidade))
     cursor.execute("INSERT INTO movimentacoes (tipo, produto_id, quantidade, local, destino, responsavel, recebedor, obs, status_entrega) VALUES (?,?,?,?,?,?,?,?,?)",
                    ('Saída', p_id, qtd, cidade, cidade, resp, receb, motivo, status))
     conn.commit()
@@ -274,6 +269,4 @@ def desfazer(id):
     return jsonify({"sucesso": True})
 
 if __name__ == '__main__':
-    configurar_banco()
     app.run(debug=True, host='0.0.0.0', port=5000)
-
